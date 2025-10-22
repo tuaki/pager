@@ -1,0 +1,22 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "jachymb32@gmail.com",
+                "Name": "Tuaki"
+            }
+        ],
+        "Category": "Windows and Tasks",
+        "Description": "Switch between virtual desktops",
+        "EnabledByDefault": true,
+        "Icon": "user-desktop",
+        "Id": "com.github.tuaki.pager",
+        "License": "GPL-2.0+",
+        "Name": "Better pager"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-Provides": [
+        "org.kde.plasma.virtualdesktops"
+    ]
+}
