@@ -5,14 +5,11 @@
 
     SPDX-License-Identifier: GPL-2.0-or-later
 */
-pragma ComponentBehavior: Bound
-
 import QtQuick
 import QtQuick.Layouts
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.components as PlasmaComponents
-// import plasma.applet.org.kde.pager
 import org.kde.plasma.workspace.dbus as DBus
 import org.kde.kirigami as Kirigami
 import org.kde.taskmanager
@@ -41,47 +38,73 @@ PlasmoidItem {
     property int wheelDelta: 0
 
     function addDesktop() {
-		const desktopCount = pagerModel.numberOfDesktops
-		DBus.SessionBus.asyncCall({
-			"service": "org.kde.kglobalaccel",
-			"path": "/VirtualDesktopManager",
-			"iface": "org.kde.KWin.VirtualDesktopManager",
-			"member": "createDesktop",
-			"arguments": [
-				// if there are 3 desktops, create the new one at the end with name "Desktop 4"
-				new DBus.uint32(desktopCount),
-				new DBus.string("New Desktop")
-			],
-		})
-	}
+        const desktopCount = pagerModel.numberOfDesktops
+        DBus.SessionBus.asyncCall({
+            "service": "org.kde.kglobalaccel",
+            "path": "/VirtualDesktopManager",
+            "iface": "org.kde.KWin.VirtualDesktopManager",
+            "member": "createDesktop",
+            "arguments": [
+                // if there are 3 desktops, create the new one at the end with name "Desktop 4"
+                new DBus.uint32(desktopCount),
+                new DBus.string("New Desktop")
+            ],
+        })
+    }
 
-	function removeDesktop() {
-		// TODO pretty sure this has always worked by removing the last desktop, but we probably should make the
-		// context menu aware of which one was clicked (at least in full representation) and remove that one?
-		const lastDesktopId = pagerModel.desktopIds[pagerModel.numberOfDesktops - 1]
-		DBus.SessionBus.asyncCall({
-			"service": "org.kde.kglobalaccel",
-			"path": "/VirtualDesktopManager",
-			"iface": "org.kde.KWin.VirtualDesktopManager",
-			"member": "removeDesktop",
-			"arguments": [
-				// This might not work under X11, as desktop IDs are unit there
-				new DBus.string(lastDesktopId)
-			],
-		})
-	}
+    function removeDesktop() {
+        // TODO pretty sure this has always worked by removing the last desktop, but we probably should make the
+        // context menu aware of which one was clicked (at least in full representation) and remove that one?
+        const lastDesktopId = pagerModel.desktopIds[pagerModel.numberOfDesktops - 1]
+        DBus.SessionBus.asyncCall({
+            "service": "org.kde.kglobalaccel",
+            "path": "/VirtualDesktopManager",
+            "iface": "org.kde.KWin.VirtualDesktopManager",
+            "member": "removeDesktop",
+            "arguments": [
+                // This might not work under X11, as desktop IDs are unit there
+                new DBus.string(lastDesktopId)
+            ],
+        })
+    }
+
+    function runOverview() {
+        DBus.SessionBus.asyncCall({
+            "service": "org.kde.kglobalaccel",
+            "path": "/component/kwin",
+            "iface": "org.kde.kglobalaccel.Component",
+            "member": "invokeShortcut",
+            "arguments": [
+                new DBus.string("Overview")
+            ],
+        })
+    }
+
+    function showDesktop() {
+        // using the shortcut rather than the method of kwin itself as this has no argument and
+        // always toggles the effect
+        DBus.SessionBus.asyncCall({
+            "service": "org.kde.kglobalaccel",
+            "path": "/component/kwin",
+            "iface": "org.kde.kglobalaccel.Component",
+            "member": "invokeShortcut",
+            "arguments": [
+                new DBus.string("Show Desktop")
+            ],
+        })
+    }
 
     function setCurrentDesktop(index) {
-		DBus.SessionBus.asyncCall({
-			"service": "org.kde.KWin",
-			"path": "/KWin",
-			"iface": "org.kde.KWin",
-			"member": "setCurrentDesktop",
-			"arguments": [
-				new DBus.int32(index + 1)
-			],
-		})
-	}
+        DBus.SessionBus.asyncCall({
+            "service": "org.kde.KWin",
+            "path": "/KWin",
+            "iface": "org.kde.KWin",
+            "member": "setCurrentDesktop",
+            "arguments": [
+                new DBus.int32(index + 1)
+            ],
+        })
+    }
 
     MouseArea {
         id: rootMouseArea
@@ -109,7 +132,7 @@ PlasmoidItem {
 
             const currentIndex = pagerModel.desktopIds.indexOf(pagerModel.currentDesktop);
             const isOnFirstDesktop = currentIndex === 0;
-		    const isOnLastDesktop = currentIndex === pagerModel.numberOfDesktops - 1;
+            const isOnLastDesktop = currentIndex === pagerModel.numberOfDesktops - 1;
 
             while (increment !== 0) {
                 if (increment < 0) {
@@ -130,36 +153,6 @@ PlasmoidItem {
         }
     }
 
-    Component {
-        id: desktopLabelComponent
-
-        PlasmaComponents.Label {
-            required property int index
-            required property KSvg.FrameSvgItem desktopFrame
-
-            anchors {
-                fill: parent
-                topMargin: desktopFrame.margins.top
-                leftMargin: desktopFrame.margins.left
-                rightMargin: desktopFrame.margins.right
-                bottomMargin: desktopFrame.margins.bottom
-            }
-
-            text: Plasmoid.configuration.displayedText ? pagerModel.desktopNames[index] : index + 1
-            textFormat: Text.PlainText
-
-            wrapMode: Text.NoWrap
-            elide: Text.ElideRight
-
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-
-            font.pixelSize: Math.min(height, Kirigami.Theme.defaultFont.pixelSize)
-
-            z: 9999 // The label goes above everything
-        }
-    }
-
     Grid {
         id: pagerItemGrid
 
@@ -171,7 +164,7 @@ PlasmoidItem {
         z: 1
 
         readonly property int effectiveRows: {
-            if (!pagerModel.numberOfDesktops) {
+            if (!pagerModel.numberOfDesktops || Plasmoid.configuration.showOnlyCurrentScreen) {
                 return 1;
             }
 
@@ -192,7 +185,7 @@ PlasmoidItem {
         }
 
         readonly property int effectiveColumns: {
-            if (!pagerModel.numberOfDesktops) {
+            if (!pagerModel.numberOfDesktops || Plasmoid.configuration.showOnlyCurrentScreen) {
                 return 1;
             }
 
@@ -225,7 +218,8 @@ PlasmoidItem {
                 required property var model
                 id: desktop
 
-                readonly property bool active: pagerModel.currentDesktop === pagerModel.desktopIds[index]
+                readonly property bool isCurrentDesktop: pagerModel.currentDesktop === pagerModel.desktopIds[index]
+                visible: !Plasmoid.configuration.showOnlyCurrentScreen || isCurrentDesktop
 
                 width: pagerItemGrid.columnWidth
                 height: pagerItemGrid.rowHeight
@@ -234,7 +228,7 @@ PlasmoidItem {
                 state: {
                     if (desktopMouseArea.enabled && (desktopMouseArea.containsMouse || desktopMouseArea.activeFocus)) {
                         return "hover";
-                    } else if (active) {
+                    } else if (isCurrentDesktop) {
                         return "active";
                     } else {
                         return "normal";
@@ -268,7 +262,21 @@ PlasmoidItem {
                     hoverEnabled: true
                     activeFocusOnTab: true
                     onClicked: mouse => {
-                        setCurrentDesktop(index);
+                        if (isCurrentDesktop) {
+                            switch (plasmoid.configuration.currentDesktopSelected) {
+                                case 0: // do nothing
+                                    break;
+                                case 1: // show desktop
+                                    showDesktop()
+                                    break;
+                                case 2:
+                                    runOverview()
+                                    break;
+                            }
+                        }
+                        else {
+                            setCurrentDesktop(index);
+                        }
                     }
                     Accessible.name: Plasmoid.configuration.displayedText ? pagerModel.desktopNames[index] : i18n("Desktop %1", (index + 1))
                     Accessible.description: Plasmoid.configuration.displayedText ? i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", pagerModel.desktopNames[index]) : i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", (index + 1))
@@ -285,11 +293,28 @@ PlasmoidItem {
                     }
                 }
 
-                Component.onCompleted: {
-                    if (Plasmoid.configuration.displayedText < 2) {
-                        // desktopLabelComponent.createObject(desktop, { index, model, desktopFrame });
-                        desktopLabelComponent.createObject(desktop, { index, desktopFrame });
+                PlasmaComponents.Label {
+                    anchors {
+                        fill: parent
+                        topMargin: desktopFrame.margins.top
+                        leftMargin: desktopFrame.margins.left
+                        rightMargin: desktopFrame.margins.right
+                        bottomMargin: desktopFrame.margins.bottom
                     }
+
+                    visible: Plasmoid.configuration.displayedText < 2
+                    text: Plasmoid.configuration.displayedText ? pagerModel.desktopNames[index] : index + 1
+                    textFormat: Text.PlainText
+
+                    wrapMode: Text.NoWrap
+                    elide: Text.ElideRight
+
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+
+                    font.pixelSize: Math.min(height, Kirigami.Theme.defaultFont.pixelSize)
+
+                    z: 9999 // The label goes above everything
                 }
             }
         }
