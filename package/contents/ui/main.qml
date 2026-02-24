@@ -5,17 +5,19 @@
 
     SPDX-License-Identifier: GPL-2.0-or-later
 */
+pragma ComponentBehavior: Bound
 
-import QtQuick 2.15
-import QtQuick.Layouts 1.1
-import org.kde.plasma.plasmoid 2.0
+import QtQuick
+import QtQuick.Layouts
+import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
-import org.kde.ksvg 1.0 as KSvg
-import org.kde.plasma.components 3.0 as PlasmaComponents3
-import org.kde.plasma.private.pager 2.0
-import org.kde.kirigami 2.20 as Kirigami
-
+import org.kde.plasma.components as PlasmaComponents
+// import plasma.applet.org.kde.pager
+import org.kde.plasma.workspace.dbus as DBus
+import org.kde.kirigami as Kirigami
+import org.kde.taskmanager
 import org.kde.kcmutils as KCM
+import org.kde.ksvg as KSvg
 import org.kde.config as KConfig
 
 PlasmoidItem {
@@ -33,25 +35,53 @@ PlasmoidItem {
     Layout.maximumWidth: vertical ? Infinity : computed
     Layout.maximumHeight: vertical ? computed : Infinity
 
-    Plasmoid.status: pagerModel.shouldShowPager ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.HiddenStatus
-
     Layout.fillWidth: root.vertical
     Layout.fillHeight: !root.vertical
 
     property int wheelDelta: 0
 
-    function sanitize(input: string): string {
-        // Based on QQuickStyledTextPrivate::parseEntity
-        const table = {
-            '>': '&gt;',
-            '<': '&lt;',
-            '&': '&amp;',
-            "'": '&apos;',
-            '"': '&quot;',
-            '\u00a0': '&nbsp;',
-        };
-        return input.replace(/[<>&'"\u00a0]/g, c => table[c]);
-    }
+    function addDesktop() {
+		const desktopCount = pagerModel.numberOfDesktops
+		DBus.SessionBus.asyncCall({
+			"service": "org.kde.kglobalaccel",
+			"path": "/VirtualDesktopManager",
+			"iface": "org.kde.KWin.VirtualDesktopManager",
+			"member": "createDesktop",
+			"arguments": [
+				// if there are 3 desktops, create the new one at the end with name "Desktop 4"
+				new DBus.uint32(desktopCount),
+				new DBus.string("New Desktop")
+			],
+		})
+	}
+
+	function removeDesktop() {
+		// TODO pretty sure this has always worked by removing the last desktop, but we probably should make the
+		// context menu aware of which one was clicked (at least in full representation) and remove that one?
+		const lastDesktopId = pagerModel.desktopIds[pagerModel.numberOfDesktops - 1]
+		DBus.SessionBus.asyncCall({
+			"service": "org.kde.kglobalaccel",
+			"path": "/VirtualDesktopManager",
+			"iface": "org.kde.KWin.VirtualDesktopManager",
+			"member": "removeDesktop",
+			"arguments": [
+				// This might not work under X11, as desktop IDs are unit there
+				new DBus.string(lastDesktopId)
+			],
+		})
+	}
+
+    function setCurrentDesktop(index) {
+		DBus.SessionBus.asyncCall({
+			"service": "org.kde.KWin",
+			"path": "/KWin",
+			"iface": "org.kde.KWin",
+			"member": "setCurrentDesktop",
+			"arguments": [
+				new DBus.int32(index + 1)
+			],
+		})
+	}
 
     MouseArea {
         id: rootMouseArea
@@ -77,17 +107,21 @@ PlasmoidItem {
                 increment--;
             }
 
+            const currentIndex = pagerModel.desktopIds.indexOf(pagerModel.currentDesktop);
+            const isOnFirstDesktop = currentIndex === 0;
+		    const isOnLastDesktop = currentIndex === pagerModel.numberOfDesktops - 1;
+
             while (increment !== 0) {
                 if (increment < 0) {
                     const nextPage = Plasmoid.configuration.wrapPage
-                        ? (pagerModel.currentPage + 1) % repeater.count
-                        : Math.min(pagerModel.currentPage + 1, repeater.count - 1);
-                    pagerModel.changePage(nextPage);
+                        ? (currentIndex + 1) % pagerModel.numberOfDesktops
+                        : Math.min(currentIndex + 1, pagerModel.numberOfDesktops - 1);
+                    setCurrentDesktop(nextPage);
                 } else {
                     const previousPage = Plasmoid.configuration.wrapPage
-                        ? (repeater.count + pagerModel.currentPage - 1) % repeater.count
-                        : Math.max(pagerModel.currentPage - 1, 0);
-                    pagerModel.changePage(previousPage);
+                        ? (pagerModel.numberOfDesktops + currentIndex - 1) % pagerModel.numberOfDesktops
+                        : Math.max(currentIndex - 1, 0);
+                    setCurrentDesktop(previousPage);
                 }
 
                 increment += (increment < 0) ? 1 : -1;
@@ -96,36 +130,11 @@ PlasmoidItem {
         }
     }
 
-    PagerModel {
-        id: pagerModel
-
-        enabled: root.visible
-
-        showDesktop: (Plasmoid.configuration.currentDesktopSelected === 1)
-
-        showOnlyCurrentScreen: Plasmoid.configuration.showOnlyCurrentScreen
-        screenGeometry: Plasmoid.containment.screenGeometry
-
-        pagerType: PagerModel.VirtualDesktops
-    }
-
-    Connections {
-        target: Plasmoid.configuration
-
-        function onDisplayedTextChanged() {
-            // Causes the model to reset; Component.onCompleted in the
-            // desktop delegate now gets a chance to create the label item,
-            // which it otherwise will not do.
-            pagerModel.refresh();
-        }
-    }
-
     Component {
         id: desktopLabelComponent
 
-        PlasmaComponents3.Label {
+        PlasmaComponents.Label {
             required property int index
-            required property var model
             required property KSvg.FrameSvgItem desktopFrame
 
             anchors {
@@ -136,7 +145,7 @@ PlasmoidItem {
                 bottomMargin: desktopFrame.margins.bottom
             }
 
-            text: Plasmoid.configuration.displayedText ? model.display : index + 1
+            text: Plasmoid.configuration.displayedText ? pagerModel.desktopNames[index] : index + 1
             textFormat: Text.PlainText
 
             wrapMode: Text.NoWrap
@@ -162,20 +171,20 @@ PlasmoidItem {
         z: 1
 
         readonly property int effectiveRows: {
-            if (!pagerModel.count) {
+            if (!pagerModel.numberOfDesktops) {
                 return 1;
             }
 
             let rows = 1;
-            let columns = Math.floor(pagerModel.count / pagerModel.layoutRows);
+            let columns = Math.floor(pagerModel.numberOfDesktops / pagerModel.desktopLayoutRows);
 
-            if (pagerModel.count % pagerModel.layoutRows > 0) {
+            if (pagerModel.numberOfDesktops % pagerModel.desktopLayoutRows > 0) {
                 columns += 1;
             }
 
-            rows = Math.floor(pagerModel.count / columns);
+            rows = Math.floor(pagerModel.numberOfDesktops / columns);
 
-            if (pagerModel.count % columns > 0) {
+            if (pagerModel.numberOfDesktops % columns > 0) {
                 rows += 1;
             }
 
@@ -183,11 +192,11 @@ PlasmoidItem {
         }
 
         readonly property int effectiveColumns: {
-            if (!pagerModel.count) {
+            if (!pagerModel.numberOfDesktops) {
                 return 1;
             }
 
-            return Math.ceil(pagerModel.count / effectiveRows);
+            return Math.ceil(pagerModel.numberOfDesktops / effectiveRows);
         }
 
         states: [
@@ -209,20 +218,14 @@ PlasmoidItem {
 
         Repeater {
             id: repeater
+            model: pagerModel.numberOfDesktops
 
-            model: pagerModel
-
-            PlasmaCore.ToolTipArea {
+            Item {
+                required property int index
+                required property var model
                 id: desktop
 
-                readonly property string desktopId: model.TasksModel.virtualDesktop
-                readonly property bool active: (index === pagerModel.currentPage)
-
-                mainText: model.display
-                // our ToolTip has maximumLineCount of 8 which doesn't fit but QML doesn't
-                // respect that in RichText so we effectively can put in as much as we like :)
-                // it also gives us more flexibility when it comes to styling the <li>
-                textFormat: Text.RichText
+                readonly property bool active: pagerModel.currentDesktop === pagerModel.desktopIds[index]
 
                 width: pagerItemGrid.columnWidth
                 height: pagerItemGrid.rowHeight
@@ -265,10 +268,10 @@ PlasmoidItem {
                     hoverEnabled: true
                     activeFocusOnTab: true
                     onClicked: mouse => {
-                        pagerModel.changePage(index);
+                        setCurrentDesktop(index);
                     }
-                    Accessible.name: Plasmoid.configuration.displayedText ? model.display : i18n("Desktop %1", (index + 1))
-                    Accessible.description: Plasmoid.configuration.displayedText ? i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", model.display) : i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", (index + 1))
+                    Accessible.name: Plasmoid.configuration.displayedText ? pagerModel.desktopNames[index] : i18n("Desktop %1", (index + 1))
+                    Accessible.description: Plasmoid.configuration.displayedText ? i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", pagerModel.desktopNames[index]) : i18nc("@info:tooltip %1 is the name of a virtual desktop", "Switch to %1", (index + 1))
                     Accessible.role: Accessible.Button
                     Keys.onPressed: event => {
                         switch (event.key) {
@@ -276,7 +279,7 @@ PlasmoidItem {
                         case Qt.Key_Enter:
                         case Qt.Key_Return:
                         case Qt.Key_Select:
-                            pagerModel.changePage(index);
+                            setCurrentDesktop(index);
                             break;
                         }
                     }
@@ -284,11 +287,16 @@ PlasmoidItem {
 
                 Component.onCompleted: {
                     if (Plasmoid.configuration.displayedText < 2) {
-                        desktopLabelComponent.createObject(desktop, { index, model, desktopFrame });
+                        // desktopLabelComponent.createObject(desktop, { index, model, desktopFrame });
+                        desktopLabelComponent.createObject(desktop, { index, desktopFrame });
                     }
                 }
             }
         }
+    }
+
+    VirtualDesktopInfo {
+        id: pagerModel
     }
 
     Plasmoid.contextualActions: [
@@ -296,14 +304,14 @@ PlasmoidItem {
             text: i18nc("@action:inmenu widget context menu", "Add Virtual Desktop")
             icon.name: "list-add"
             visible: KConfig.KAuthorized.authorize("kcm_kwin_virtualdesktops")
-            onTriggered: pagerModel.addDesktop()
+            onTriggered: addDesktop()
         },
         PlasmaCore.Action {
             text: i18nc("@action:inmenu widget context menu", "Remove Virtual Desktop")
             icon.name: "list-remove"
             visible: KConfig.KAuthorized.authorize("kcm_kwin_virtualdesktops")
             enabled: repeater.count > 1
-            onTriggered: pagerModel.removeDesktop()
+            onTriggered: removeDesktop()
         },
         PlasmaCore.Action {
             text: i18nc("@action:inmenu widget context menu", "Configure Virtual Desktops…")
